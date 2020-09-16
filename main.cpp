@@ -106,6 +106,7 @@ private:
         createInstance();
         setupDebugMessenger();
         pickPhysicalDevice();
+        createLogicalDevice();
     }
 
     void createInstance() {
@@ -168,6 +169,9 @@ private:
     }
 
     void cleanup() {
+        // note how logical devices are not directly related to the instance
+        vkDestroyDevice(device, nullptr);
+
         if (enableValidationLayers) {
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
@@ -318,6 +322,50 @@ private:
         return indices;
     }
 
+    void createLogicalDevice() {
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+
+        // specify which queue family the queue belongs to and the number of queues we want
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+        queueCreateInfo.queueCount = 1;
+        // assign priority to queues for scheduling of command buffer execution, 0.0f - 1.0f
+        float queuePriority = 1.0f;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        // specify desired physical device features that was checked for in selecting a physical device
+        VkPhysicalDeviceFeatures deviceFeatures{};
+
+        VkDeviceCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+
+        // device creation ignores enabledExtensionCount and ppEnabledLayerNames because there was
+        // distinction between instance and device specific layers; setting them is still good for
+        // compatibility with older versions of Vulkan
+        createInfo.enabledExtensionCount = 0;
+
+        if (enableValidationLayers) {
+            createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+            createInfo.ppEnabledLayerNames = validationLayers.data();
+        }
+        else {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        // note how logical devices are not directly related to the instance
+        if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create logical device!");
+        }
+
+        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    }
+
     GLFWwindow* window;
 
     VkInstance instance;
@@ -325,6 +373,12 @@ private:
     VkDebugUtilsMessengerEXT debugMessenger;
 
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+    // logical device is created to interface with the physical device
+    VkDevice device;
+
+    // a queue handle to interface with the device's graphics queue
+    VkQueue graphicsQueue;
 
 };
 
