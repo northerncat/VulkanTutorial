@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <vector>
+#include <set>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -76,10 +77,13 @@ void DestroyDebugUtilsMessengerEXT(
 }
 
 struct QueueFamilyIndices {
+    // queue family for drawing commands
     std::optional<uint32_t> graphicsFamily;
+    // queue family for the device to present images to the created surface
+    std::optional<uint32_t> presentFamily;
 
     bool isComplete() {
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -105,6 +109,8 @@ private:
     void initVulkan() {
         createInstance();
         setupDebugMessenger();
+        createSurface();
+
         pickPhysicalDevice();
         createLogicalDevice();
     }
@@ -176,6 +182,7 @@ private:
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
 
+        vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
 
         glfwDestroyWindow(window);
@@ -266,6 +273,21 @@ private:
         }
     }
 
+    void createSurface() {
+        // GLFW handles the platform specific logic for creating a VkSurfaceKHR; otherwise we
+        // would create a Win32SurfaceKHR through VkWin32SurfaceCreateInfoKHR:
+        //
+        // VkWin32SurfaceCreateInfoKHR createInfo{};
+        // createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+        // createInfo.hwnd = glfwGetWin32Window(window);
+        // createInfo.hinstance = GetModuleHandle(nullptr);
+        // vkCreateWin32SurfaceKHR(instance, &createInfo, nullptr, &surface) != VK_SUCCESS
+        //
+        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+            throw std::runtime_error("createSurface: Failed to create window surface!");
+        }
+    }
+
     // select graphics card in the system that supports desired features
     void pickPhysicalDevice() {
         uint32_t deviceCount = 0;
@@ -312,6 +334,12 @@ private:
                 indices.graphicsFamily = index;
             }
 
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, index, surface, &presentSupport);
+            if (presentSupport) {
+                indices.presentFamily = index;
+            }
+
             if (indices.isComplete()) {
                 break;
             }
@@ -325,15 +353,20 @@ private:
     void createLogicalDevice() {
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-        VkDeviceQueueCreateInfo queueCreateInfo{};
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
-        // specify which queue family the queue belongs to and the number of queues we want
-        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
-        queueCreateInfo.queueCount = 1;
-        // assign priority to queues for scheduling of command buffer execution, 0.0f - 1.0f
         float queuePriority = 1.0f;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        for (uint32_t queueFamily : uniqueQueueFamilies) {
+            VkDeviceQueueCreateInfo queueCreateInfo{};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            // specify which queue family the queue belongs to and the number of queues we want
+            queueCreateInfo.queueFamilyIndex = queueFamily;
+            queueCreateInfo.queueCount = 1;
+            // assign priority to queues for scheduling of command buffer execution, 0.0f - 1.0f
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
 
         // specify desired physical device features that was checked for in selecting a physical device
         VkPhysicalDeviceFeatures deviceFeatures{};
@@ -341,8 +374,8 @@ private:
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
-        createInfo.pQueueCreateInfos = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
+        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+        createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.pEnabledFeatures = &deviceFeatures;
 
         // device creation ignores enabledExtensionCount and ppEnabledLayerNames because there was
@@ -360,10 +393,11 @@ private:
 
         // note how logical devices are not directly related to the instance
         if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create logical device!");
+            throw std::runtime_error("createLogicalDevice: Failed to create logical device!");
         }
 
         vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
     GLFWwindow* window;
@@ -377,8 +411,12 @@ private:
     // logical device is created to interface with the physical device
     VkDevice device;
 
-    // a queue handle to interface with the device's graphics queue
+    // queue handles to interface with the device's graphics and present queues
     VkQueue graphicsQueue;
+    VkQueue presentQueue;
+
+    // Windows System Integration (WSI) interface from the VK_KHR_surface extension
+    VkSurfaceKHR surface;
 
 };
 
