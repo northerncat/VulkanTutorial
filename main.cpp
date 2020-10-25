@@ -4,11 +4,12 @@
 
 #include <cstdint> // necessary for UINT32_MAX
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <vector>
-#include <set>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -58,6 +59,24 @@ void printVkLayers(const std::vector<VkLayerProperties>& layers) {
     }
     std::cout << std::endl;
 
+}
+
+std::vector<char> readFile(const std::string& filename) {
+    // start reading the binary file at the end
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filename);
+    }
+
+    size_t fileSize = (size_t)file.tellg();
+    std::vector<char> buffer(fileSize);
+
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    file.close();
+
+    return buffer;
 }
 
 
@@ -135,6 +154,8 @@ private:
 
         createSwapChain();
         createImageViews();
+
+        createGraphicsPipeline();
     }
 
     void createInstance() {
@@ -613,6 +634,14 @@ private:
                 throw std::runtime_error("Failed to create image views!");
             }
         }
+    }
+
+    void createGraphicsPipeline() {
+        auto vertShaderCode = readFile("shaders/vert.spv");
+        auto fragShaderCode = readFile("shaders/frag.spv");
+
+        std::cout << "Got vert shader code of " << vertShaderCode.size() << " bytes" << std::endl;
+        std::cout << "Got frag shader code of " << fragShaderCode.size() << " bytes" << std::endl;
     }
 
     GLFWwindow* window;
