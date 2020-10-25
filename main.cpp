@@ -640,8 +640,52 @@ private:
         auto vertShaderCode = readFile("shaders/vert.spv");
         auto fragShaderCode = readFile("shaders/frag.spv");
 
-        std::cout << "Got vert shader code of " << vertShaderCode.size() << " bytes" << std::endl;
-        std::cout << "Got frag shader code of " << fragShaderCode.size() << " bytes" << std::endl;
+        if (enableValidationLayers) {
+            std::cout << "Got vert shader code of " << vertShaderCode.size() << " bytes" << std::endl;
+            std::cout << "Got frag shader code of " << fragShaderCode.size() << " bytes" << std::endl;
+        }
+
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        // assign shader modules to pipeline stages during pipeline creation process
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main"; // entry point function to invoke for the shader
+        // pSpecializationInfo can specify shader constant values and can be used to create different
+        // shader stages from the same shader module
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shaderStages[2] = { vertShaderStageInfo, fragShaderStageInfo };
+
+        vkDestroyShaderModule(device, fragShaderModule, nullptr);
+        vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    }
+
+    /**
+     * Shader modules are wrappers of the compiled shader bytecode to pass them into the graphics pipeline.
+     * 
+     * @param[in] code: buffer of shader bytecode 
+     */
+    VkShaderModule createShaderModule(const std::vector<char>& code) {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        // pCode is a uint32_t*, so we would need to ensure that the byte alignment of the char* data is consistent with a uint32_t*
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+    
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create shader module");
+        }
+        return shaderModule;
     }
 
     GLFWwindow* window;
