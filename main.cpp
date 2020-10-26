@@ -33,12 +33,12 @@ const bool enableValidationLayers = true;
 // helper function to print an array of string
 void printCharPointerArray(
     const char** strings,
-    uint32_t length,
+    size_t length,
     const std::string& label = "",
     std::ostream& output = std::cout
 ) {
     output << label.c_str() << std::endl;
-    for (int i = 0; i < length; ++i) {
+    for (size_t i = 0; i < length; ++i) {
         output << strings[i] << std::endl;
     }
     output << std::endl;
@@ -155,6 +155,7 @@ private:
         createSwapChain();
         createImageViews();
 
+        createRenderPass();
         createGraphicsPipeline();
     }
 
@@ -181,7 +182,7 @@ private:
         auto requiredExtensions = getRequiredExtensions();
         createInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
         createInfo.ppEnabledExtensionNames = requiredExtensions.data();
-        printCharPointerArray(requiredExtensions    .data(), requiredExtensions.size());
+        printCharPointerArray(requiredExtensions.data(), requiredExtensions.size());
 
         VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
         // populate the global validation layers to enable
@@ -219,6 +220,7 @@ private:
 
     void cleanup() {
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        vkDestroyRenderPass(device, renderPass, nullptr);
 
         for (auto imageView : swapChainImageViews) {
             vkDestroyImageView(device, imageView, nullptr);
@@ -787,6 +789,45 @@ private:
         return shaderModule;
     }
 
+    void createRenderPass() {
+        VkAttachmentDescription colorAttachment{};
+        // color buffer attachment represented by swap chain images
+        colorAttachment.format = swapChainImageFormat;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        // operations to perform before and after rendering
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        // ignore stencil buffer data
+        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        // description of pixel format in the VkImage object representing the framebuffer
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        // describe attachments for subpasses that are part of one render pass
+        VkAttachmentReference colorAttachmentRef{};
+        colorAttachmentRef.attachment = 0; // index of attachment into the render pass' attachments array
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        // index 0's color attachment corresponds to "layout(location = 0) out vec4 outColor"
+        subpass.pColorAttachments = &colorAttachmentRef;
+
+        // Render pass
+        VkRenderPassCreateInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.subpassCount = 1;
+        renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.attachmentCount = 1;
+        renderPassInfo.pAttachments = &colorAttachment;
+
+        if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create render pass");
+        }
+    }
+
     GLFWwindow* window;
 
     VkInstance instance;
@@ -812,8 +853,8 @@ private:
 
     std::vector<VkImageView> swapChainImageViews;
 
+    VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
-
 };
 
 int main() {
