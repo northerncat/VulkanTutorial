@@ -158,6 +158,9 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+
+        createCommandPool();
+        createCommandBuffers();
     }
 
     void createInstance() {
@@ -220,6 +223,8 @@ private:
     }
 
     void cleanup() {
+        vkDestroyCommandPool(device, commandPool, nullptr);
+
         for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -437,10 +442,13 @@ private:
     }
 
     void createLogicalDevice() {
-        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        queueFamilyIndices = findQueueFamilies(physicalDevice);
 
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-        std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+        std::set<uint32_t> uniqueQueueFamilies = {
+            queueFamilyIndices.graphicsFamily.value(),
+            queueFamilyIndices.presentFamily.value(),
+        };
 
         float queuePriority = 1.0f;
         for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -484,8 +492,8 @@ private:
             throw std::runtime_error("createLogicalDevice: Failed to create logical device!");
         }
 
-        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
-        vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+        vkGetDeviceQueue(device, queueFamilyIndices.graphicsFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(device, queueFamilyIndices.presentFamily.value(), 0, &presentQueue);
     }
 
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
@@ -587,7 +595,8 @@ private:
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
-        } else {
+        }
+        else {
             // an image is owned by one queue family at a time and ownership must be explicitly transferred before using it in another queue family
             createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
             createInfo.queueFamilyIndexCount = 0; // Optional
@@ -622,11 +631,11 @@ private:
             VkImageViewCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             createInfo.image = swapChainImages[i];
-            
+
             // specifies how the image data should be interpreted
             createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             createInfo.format = swapChainImageFormat;
-            
+
             // remap color channels if necessary
             createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
             createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -701,7 +710,7 @@ private:
 
         // scissor defines rectangles in which regions pixels will actually be stored
         VkRect2D scissor{};
-        scissor.offset = {0, 0};
+        scissor.offset = { 0, 0 };
         scissor.extent = swapChainExtent;
 
         VkPipelineViewportStateCreateInfo viewportStateInfo{};
@@ -804,8 +813,8 @@ private:
 
     /**
      * Shader modules are wrappers of the compiled shader bytecode to pass them into the graphics pipeline.
-     * 
-     * @param[in] code: buffer of shader bytecode 
+     *
+     * @param[in] code: buffer of shader bytecode
      */
     VkShaderModule createShaderModule(const std::vector<char>& code) {
         VkShaderModuleCreateInfo createInfo{};
@@ -813,7 +822,7 @@ private:
         createInfo.codeSize = code.size();
         // pCode is a uint32_t*, so we would need to ensure that the byte alignment of the char* data is consistent with a uint32_t*
         createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-    
+
         VkShaderModule shaderModule;
         if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create shader module");
@@ -881,6 +890,71 @@ private:
         }
     }
 
+    void createCommandPool() {
+        VkCommandPoolCreateInfo commandPoolInfo{};
+        commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        commandPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+        commandPoolInfo.flags = 0; // can be used to specify how the command buffers may be rerecorded
+
+        if (vkCreateCommandPool(device, &commandPoolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create command pool");
+        }
+    }
+
+    void createCommandBuffers() {
+        // need to record a command buffer for each framebuffer in the swap chain
+        commandBuffers.resize(swapChainFramebuffers.size());
+        VkCommandBufferAllocateInfo commandBufferInfo{};
+        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        commandBufferInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+        commandBufferInfo.commandPool = commandPool;
+        // primary command buffers can be submitted to a queue for execution, but cannot be called from others
+        // vice versa for secondary command buffers
+        commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        if (vkAllocateCommandBuffers(device, &commandBufferInfo, commandBuffers.data()) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate command buffers");
+        }
+
+        for (size_t i = 0; i < commandBuffers.size(); ++i) {
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = 0; // describe the command buffer's usage
+            beginInfo.pInheritanceInfo = nullptr; // only relevant for secondary command buffers
+
+            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to being recording command buffer");
+            }
+
+            VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
+            renderPassInfo.framebuffer = swapChainFramebuffers[i];
+            renderPassInfo.renderArea.extent = swapChainExtent;
+            renderPassInfo.renderArea.offset = { 0, 0 };
+
+            VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+            renderPassInfo.clearValueCount = 1;
+            renderPassInfo.pClearValues = &clearColor;
+
+            // subpass contents controls how the drawing commands within the render pass are provided
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            // vertex count: 3 vertices for one triangle
+            // instance count: used for instance rendering, 1 indicates disabling
+            // first vertex: offset into the vertex buffer, lowest value of `gl_VertexIndex`
+            // first instance: offset for instanced rendering, lowest value of `gl_InstanceIndex`
+            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+            // end render pass and recording command buffer
+            vkCmdEndRenderPass(commandBuffers[i]);
+            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to record command buffer");
+            }
+        }
+    }
+
     GLFWwindow* window;
 
     VkInstance instance;
@@ -893,6 +967,7 @@ private:
     VkDevice device;
 
     // queue handles to interface with the device's graphics and present queues
+    QueueFamilyIndices queueFamilyIndices;
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
@@ -910,6 +985,9 @@ private:
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
 };
 
 int main() {
