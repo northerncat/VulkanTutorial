@@ -219,6 +219,7 @@ private:
     }
 
     void cleanup() {
+        vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
@@ -607,6 +608,7 @@ private:
         vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
 
         swapChainImageFormat = surfaceFormat.format;
+        swapChainExtent = extent;
     }
 
     void createImageViews() {
@@ -662,10 +664,10 @@ private:
         // shader stages from the same shader module
 
         VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vertShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        vertShaderStageInfo.module = vertShaderModule;
-        vertShaderStageInfo.pName = "main";
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
 
         VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
@@ -766,6 +768,31 @@ private:
             throw std::runtime_error("failed to create pipeline layout!");
         }
 
+        // actually creating the graphics pipeline
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        // shader stages
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        // fixed function stages
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
+        pipelineInfo.pViewportState = &viewportStateInfo;
+        pipelineInfo.pRasterizationState = &rasterizerInfo;
+        pipelineInfo.pMultisampleState = &multisamplingInfo;
+        pipelineInfo.pDepthStencilState = nullptr; // optional
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = nullptr; // optional
+        // layout
+        pipelineInfo.layout = pipelineLayout;
+        // render pass
+        pipelineInfo.renderPass = renderPass;
+        pipelineInfo.subpass = 0; // index of subpass that this pipeline would use
+
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create graphics pipeline");
+        }
+
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
@@ -855,6 +882,7 @@ private:
 
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
+    VkPipeline graphicsPipeline;
 };
 
 int main() {
