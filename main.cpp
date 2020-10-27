@@ -211,6 +211,7 @@ private:
         createFramebuffers();
 
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
 
         createSyncObjects();
@@ -359,6 +360,9 @@ private:
 
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        vkFreeMemory(device, vertexBufferMemory, nullptr);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1132,11 +1136,16 @@ private:
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            VkBuffer vertexBuffers[] = { vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
             // vertex count: 3 vertices for one triangle
             // instance count: used for instance rendering, 1 indicates disabling
             // first vertex: offset into the vertex buffer, lowest value of `gl_VertexIndex`
             // first instance: offset for instanced rendering, lowest value of `gl_InstanceIndex`
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
             // end render pass and recording command buffer
             vkCmdEndRenderPass(commandBuffers[i]);
@@ -1167,6 +1176,56 @@ private:
                 throw std::runtime_error("Failed to create synchronization objects for frame index " + i);
             }
         }
+    }
+
+    void createVertexBuffer() {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create vertex buffer");
+        }
+
+        VkMemoryRequirements memoryRequirements;
+        vkGetBufferMemoryRequirements(device, vertexBuffer, &memoryRequirements);
+
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = bufferInfo.size;
+        allocateInfo.memoryTypeIndex = findMemoryType(
+            memoryRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        );
+
+        if (vkAllocateMemory(device, &allocateInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate vertex buffer memory");
+        }
+
+        if (vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to bind vertex buffer memory");
+        }
+
+        void* vertexData;
+        vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &vertexData);
+        memcpy(vertexData, vertices.data(), (size_t)bufferInfo.size);
+        vkUnmapMemory(device, vertexBufferMemory);
+    }
+
+    // find the memory type to use by combining the memory properties from the GPU and our application's memory requirements
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        VkPhysicalDeviceMemoryProperties memoryProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+
+        for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
+            if (typeFilter & (1 << i) && (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Failed to find suitable memory type");
     }
 
     GLFWwindow* window;
@@ -1214,6 +1273,9 @@ private:
     std::vector<VkFence> imagesInFlight;
 
     bool framebufferResized = false;
+
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
 };
 
 int main() {
