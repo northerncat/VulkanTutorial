@@ -1,6 +1,11 @@
 #include <vulkan/vulkan.h>
 
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
+
 #include <GLFW/glfw3.h>
 
 #include <array>
@@ -129,6 +134,12 @@ const std::vector<uint16_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
+struct ModelViewProjectionUniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance,
     const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
@@ -212,12 +223,14 @@ private:
         createImageViews();
 
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
 
         createCommandPool();
         createVertexBuffer();
         createIndexBuffer();
+        createMvpUniformBuffers();
         createCommandBuffers();
 
         createSyncObjects();
@@ -315,6 +328,8 @@ private:
 
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
+        updateUniformBuffer(imageIndex);
+
         // queue submission and synchronization is configured through VkSubmitInfo
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -364,8 +379,30 @@ private:
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
+    void updateUniformBuffer(uint32_t currentImageIndex) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float secondsPassed = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        ModelViewProjectionUniformBufferObject mvpUbo{};
+        mvpUbo.model = glm::rotate(glm::mat4(1.f), secondsPassed * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        mvpUbo.view = glm::lookAt(glm::vec3(2.f, 2.f, 2.f), glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 1.f, 0.f));
+        mvpUbo.proj = glm::perspective(glm::radians(45.f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.f);
+        // flip the sign of y scaling since GLM was designed for OpenGL and has inverse y direction from Vulkan
+        mvpUbo.proj[1][1] *= -1;
+
+        void* mvpUboData;
+
+        vkMapMemory(device, mvpUniformBuffersMemory[currentImageIndex], 0, sizeof(mvpUbo), 0, &mvpUboData);
+        memcpy(mvpUboData, &mvpUbo, sizeof(mvpUbo));
+        vkUnmapMemory(device, mvpUniformBuffersMemory[currentImageIndex]);
+    }
+
     void cleanup() {
         cleanupSwapChain();
+
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         vkDestroyBuffer(device, vertexBuffer, nullptr);
         vkFreeMemory(device, vertexBufferMemory, nullptr);
@@ -790,6 +827,7 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createMvpUniformBuffers();
         createCommandBuffers();
     }
 
@@ -809,6 +847,11 @@ private:
         }
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            vkDestroyBuffer(device, mvpUniformBuffers[i], nullptr);
+            vkFreeMemory(device, mvpUniformBuffersMemory[i], nullptr);
+        }
     }
 
     void createImageViews() {
@@ -962,8 +1005,8 @@ private:
         // uniforms - passed into the pipeline through layout specifications
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0; // Optional
-        pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+        pipelineLayoutInfo.setLayoutCount = 1; // Optional
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
         pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
         pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -1349,6 +1392,46 @@ private:
         vkFreeCommandBuffers(device, commandPool, 1, &copyCommandBuffer);
     }
 
+    void createDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding layoutBinding = {};
+        layoutBinding.binding = 0;
+        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        layoutBinding.descriptorCount = 1;
+        layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        layoutBinding.pImmutableSamplers = NULL;
+
+        
+        VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
+        descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        descriptorSetLayoutInfo.pNext = NULL;
+        descriptorSetLayoutInfo.bindingCount = 1;
+        descriptorSetLayoutInfo.pBindings = &layoutBinding;
+
+        if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create descriptor set layout");
+        }
+    }
+
+    void createMvpUniformBuffers() {
+        // each swap chain image has its own uniform buffer to prevent ubo from updating while it is in flight
+        mvpUniformBuffers.resize(swapChainImages.size());
+        mvpUniformBuffersMemory.resize(swapChainImages.size());
+
+        VkDeviceSize bufferSize = sizeof(ModelViewProjectionUniformBufferObject);
+
+        // uniform buffers do not need the staging buffer since they will be updated per frame and the copy operations
+        // are likely more costly than the benefit they provide
+        for (size_t i = 0; i < swapChainImages.size(); ++i) {
+            createBuffer(
+                bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                mvpUniformBuffers[i],
+                mvpUniformBuffersMemory[i]
+            );
+        }
+    }
+
     GLFWwindow* window;
 
     VkInstance instance;
@@ -1377,6 +1460,7 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkRenderPass renderPass;
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
@@ -1399,6 +1483,9 @@ private:
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+
+    std::vector<VkBuffer> mvpUniformBuffers;
+    std::vector<VkDeviceMemory> mvpUniformBuffersMemory;
 };
 
 int main() {
