@@ -96,6 +96,7 @@ std::vector<char> readFile(const std::string& filename) {
 struct Vertex {
     glm::vec2 pos;
     glm::vec3 color;
+    glm::vec2 texcoord;
 
     static VkVertexInputBindingDescription getBindingDescription() {
         // describes at which rate to load data from memory throughout the vertices, such as number
@@ -109,9 +110,9 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
         // describes how to extra vertex attributes from the data fetched with binding description
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
         // use rgba format to match the number of channels and type of the attribute data
@@ -122,15 +123,20 @@ struct Vertex {
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset = offsetof(Vertex, texcoord);
         return attributeDescriptions;
     }
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
@@ -396,11 +402,11 @@ private:
         static auto startTime = std::chrono::high_resolution_clock::now();
 
         auto currentTime = std::chrono::high_resolution_clock::now();
-        float secondsPassed = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+        float secondsPassed = std::chrono::duration<float, std::chrono::minutes::period>(currentTime - startTime).count();
 
         ModelViewProjectionUniformBufferObject mvpUbo{};
-        mvpUbo.model = glm::rotate(glm::mat4(1.f), secondsPassed * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        mvpUbo.view = glm::lookAt(glm::vec3(2.f, 2.f, 2.f), glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 1.f, 0.f));
+        mvpUbo.model = glm::rotate(glm::mat4(1.f), 0.f, glm::vec3(0.0f, 0.0f, 1.0f));
+        mvpUbo.view = glm::lookAt(glm::vec3(0.f, 0.f, 2.f), glm::vec3(0.f, 0.f, 0.f), glm::vec3(0.f, 1.f, 0.f));
         mvpUbo.proj = glm::perspective(glm::radians(45.f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.f);
         // flip the sign of y scaling since GLM was designed for OpenGL and has inverse y direction from Vulkan
         mvpUbo.proj[1][1] *= -1;
@@ -1369,18 +1375,28 @@ private:
     }
 
     void createDescriptorSetLayout() {
-        VkDescriptorSetLayoutBinding layoutBinding = {};
-        layoutBinding.binding = 0;
-        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        layoutBinding.descriptorCount = 1;
-        layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        layoutBinding.pImmutableSamplers = NULL;
+        VkDescriptorSetLayoutBinding mvpUboLayoutBinding{};
+        mvpUboLayoutBinding.binding = 0;
+        mvpUboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        mvpUboLayoutBinding.descriptorCount = 1;
+        mvpUboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        mvpUboLayoutBinding.pImmutableSamplers = NULL;
+
+        // create combined image sampler descriptor for texturing
+        VkDescriptorSetLayoutBinding textureLayoutBinding{};
+        textureLayoutBinding.binding = 1;
+        textureLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        textureLayoutBinding.descriptorCount = 1;
+        textureLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        textureLayoutBinding.pImmutableSamplers = NULL;
+
+        std::array<VkDescriptorSetLayoutBinding, 2> layoutBindings{ mvpUboLayoutBinding, textureLayoutBinding };
 
         VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
         descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         descriptorSetLayoutInfo.pNext = NULL;
-        descriptorSetLayoutInfo.bindingCount = 1;
-        descriptorSetLayoutInfo.pBindings = &layoutBinding;
+        descriptorSetLayoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
+        descriptorSetLayoutInfo.pBindings = layoutBindings.data();
 
         if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create descriptor set layout");
@@ -1408,14 +1424,17 @@ private:
     }
 
     void createDescriptorPool() {
-        VkDescriptorPoolSize descriptorPoolSize{};
-        descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorPoolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+        // validation layers cannot catch descriptor pool not large enough until errors are thrown
+        std::vector<VkDescriptorPoolSize> descriptorPoolSizes{2};
+        descriptorPoolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorPoolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+        descriptorPoolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorPoolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
         VkDescriptorPoolCreateInfo descriptorPoolInfo{};
         descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        descriptorPoolInfo.poolSizeCount = 1;
-        descriptorPoolInfo.pPoolSizes = &descriptorPoolSize;
+        descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(descriptorPoolSizes.size());
+        descriptorPoolInfo.pPoolSizes = descriptorPoolSizes.data();
         descriptorPoolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
 
         if (vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -1442,18 +1461,34 @@ private:
             descriptorBufferInfo.offset = 0;
             descriptorBufferInfo.range = sizeof(ModelViewProjectionUniformBufferObject);
 
-            VkWriteDescriptorSet writeDescriptorInfo{};
-            writeDescriptorInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writeDescriptorInfo.pBufferInfo = &descriptorBufferInfo;
-            writeDescriptorInfo.dstSet = descriptorSets[i];
+            VkDescriptorImageInfo textureSamplerInfo{};
+            textureSamplerInfo.sampler = textureSampler;
+            textureSamplerInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            textureSamplerInfo.imageView = textureImageView;
+
+            std::array<VkWriteDescriptorSet, 2> writeDescriptorInfos{};
+            writeDescriptorInfos[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDescriptorInfos[0].pBufferInfo = &descriptorBufferInfo;
+            writeDescriptorInfos[0].dstSet = descriptorSets[i];
             // uniform buffer binding index is 0 in the vertex shader
-            writeDescriptorInfo.dstBinding = 0;
-            writeDescriptorInfo.dstArrayElement = 0;
+            writeDescriptorInfos[0].dstBinding = 0;
+            writeDescriptorInfos[0].dstArrayElement = 0;
 
-            writeDescriptorInfo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            writeDescriptorInfo.descriptorCount = 1;
+            writeDescriptorInfos[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writeDescriptorInfos[0].descriptorCount = 1;
 
-            vkUpdateDescriptorSets(device, 1, &writeDescriptorInfo, 0, nullptr);
+
+            writeDescriptorInfos[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDescriptorInfos[1].pImageInfo = &textureSamplerInfo;
+            writeDescriptorInfos[1].dstSet = descriptorSets[i];
+            // sampler binding index is 1 in the fragment shader
+            writeDescriptorInfos[1].dstBinding = 1;
+            writeDescriptorInfos[1].dstArrayElement = 0;
+
+            writeDescriptorInfos[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writeDescriptorInfos[1].descriptorCount = 1;
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorInfos.size()), writeDescriptorInfos.data(), 0, nullptr);
         }
     }
 
