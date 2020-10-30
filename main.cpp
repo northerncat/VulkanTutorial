@@ -135,9 +135,10 @@ const std::vector<uint16_t> indices = {
 };
 
 struct ModelViewProjectionUniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+    // should be explicit about alignment requirements to avoid offsets being put off by field order or nested objects
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
 };
 
 VkResult CreateDebugUtilsMessengerEXT(
@@ -231,6 +232,8 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createMvpUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
 
         createSyncObjects();
@@ -828,6 +831,8 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createMvpUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
         createCommandBuffers();
     }
 
@@ -852,6 +857,8 @@ private:
             vkDestroyBuffer(device, mvpUniformBuffers[i], nullptr);
             vkFreeMemory(device, mvpUniformBuffersMemory[i], nullptr);
         }
+
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     }
 
     void createImageViews() {
@@ -960,7 +967,7 @@ private:
         rasterizerInfo.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizerInfo.lineWidth = 1.0f;
         rasterizerInfo.cullMode = VK_CULL_MODE_BACK_BIT; // cull back facing faces
-        rasterizerInfo.frontFace = VK_FRONT_FACE_CLOCKWISE; // set clockwise vertex order to be front facing
+        rasterizerInfo.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // set clockwise vertex order to be front facing
         // rasterizers can alther depth values with biases, commonly used for shadow mapping
         rasterizerInfo.depthBiasEnable = VK_FALSE;
         rasterizerInfo.depthBiasConstantFactor = 0.0f;
@@ -1198,8 +1205,9 @@ private:
             // instance count: used for instance rendering, 1 indicates disabling
             // first vertex: offset into the vertex buffer, lowest value of `gl_VertexIndex`
             // first instance: offset for instanced rendering, lowest value of `gl_InstanceIndex`
-            //vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            //vkCmdDraw(commandBuffersV[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
+            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
             vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
             // end render pass and recording command buffer
@@ -1432,6 +1440,56 @@ private:
         }
     }
 
+    void createDescriptorPool() {
+        VkDescriptorPoolSize descriptorPoolSize{};
+        descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorPoolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+        VkDescriptorPoolCreateInfo descriptorPoolInfo{};
+        descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        descriptorPoolInfo.poolSizeCount = 1;
+        descriptorPoolInfo.pPoolSizes = &descriptorPoolSize;
+        descriptorPoolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+
+        if (vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create descriptor pool");
+        }
+    }
+
+    void createDescriptorSets() {
+        std::vector<VkDescriptorSetLayout> setLayouts(swapChainImages.size(), descriptorSetLayout);
+        VkDescriptorSetAllocateInfo descriptorSetInfo{};
+        descriptorSetInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        descriptorSetInfo.descriptorPool = descriptorPool;
+        descriptorSetInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+        descriptorSetInfo.pSetLayouts = setLayouts.data();
+
+        descriptorSets.resize(swapChainImages.size());
+        if (vkAllocateDescriptorSets(device, &descriptorSetInfo, descriptorSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate descriptor sets");
+        }
+
+        for (size_t i = 0; i < swapChainImages.size(); ++i) {
+            VkDescriptorBufferInfo descriptorBufferInfo{};
+            descriptorBufferInfo.buffer = mvpUniformBuffers[i];
+            descriptorBufferInfo.offset = 0;
+            descriptorBufferInfo.range = sizeof(ModelViewProjectionUniformBufferObject);
+
+            VkWriteDescriptorSet writeDescriptorInfo{};
+            writeDescriptorInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDescriptorInfo.pBufferInfo = &descriptorBufferInfo;
+            writeDescriptorInfo.dstSet = descriptorSets[i];
+            // uniform buffer binding index is 0 in the vertex shader
+            writeDescriptorInfo.dstBinding = 0;
+            writeDescriptorInfo.dstArrayElement = 0;
+
+            writeDescriptorInfo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writeDescriptorInfo.descriptorCount = 1;
+
+            vkUpdateDescriptorSets(device, 1, &writeDescriptorInfo, 0, nullptr);
+        }
+    }
+
     GLFWwindow* window;
 
     VkInstance instance;
@@ -1486,6 +1544,8 @@ private:
 
     std::vector<VkBuffer> mvpUniformBuffers;
     std::vector<VkDeviceMemory> mvpUniformBuffersMemory;
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
 };
 
 int main() {
