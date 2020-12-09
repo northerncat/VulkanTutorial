@@ -4,14 +4,14 @@ Followed the [Vulkan tutorial](vulkan-tutorial.com) to implement a simple graphi
 
 ## Features
 - Graphics pipeline from creation to presentation
--- Proper error and warning with the standard validation layer [VK_LAYER_KHRONOS_validation](https://vulkan.lunarg.com/doc/sdk/1.2.154.1/windows/validation_layers.html)
--- Examine device properties to create Vulkan instances of physical device, logical device and queue
--- Integrate with GLFW to create window surface for presentation
--- Create FIFO swap chain and image views to host rendered images and present to the window
--- Set up render pass and record commands in command buffer
--- Create structures to bind vertex/index buffer and MVP matrices to the device
--- Minimal vertex and fragment shaders compiled with glslc to render textured geometry
--- Handle resizing through swap chain recreation
+  - Proper error and warning with the standard validation layer [VK_LAYER_KHRONOS_validation](https://vulkan.lunarg.com/doc/sdk/1.2.154.1/windows/validation_layers.html)
+  - Examine device properties to create Vulkan instances of physical device, logical device and queue
+  - Integrate with GLFW to create window surface for presentation
+  - Create FIFO swap chain and image views to host rendered images and present to the window
+  - Set up render pass and record commands in command buffer
+  - Create structures to bind vertex/index buffer and MVP matrices to the device
+  - Minimal vertex and fragment shaders compiled with glslc to render textured geometry
+  - Handle resizing through swap chain recreation
 - OBJ file loading and rendering through [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader)
 - Texture image mipmapping generation through [vkCmdBlitImage](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/vkCmdBlitImage.html)
 - Multi-sampling up to the device's maximal sample counts for color and depth buffers
